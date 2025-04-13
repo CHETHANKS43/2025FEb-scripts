@@ -1,0 +1,11 @@
+# Stop Jenkins
+sudo systemctl stop jenkins
+
+# Restore from backup
+sudo tar -xzvf /path/to/backup/jenkins_backup_YYYYMMDD.tar.gz -C /
+
+# Restore permissions (adjust if your Jenkins user is different)
+sudo chown -R jenkins:jenkins /var/lib/jenkins
+
+# Restart Jenkins
+sudo systemctl start jenkins
