@@ -1,0 +1,124 @@
+#!/bin/bash
+# Jenkins Automated Backup Script
+# Backs up JENKINS_HOME, plugins, configurations, and installed packages
+
+## Configuration - Adjust these values ##
+JENKINS_HOME="/var/lib/jenkins"  # Default Jenkins home
+BACKUP_ROOT="/opt/jenkins_backups"  # Where to store backups
+DAYS_TO_KEEP=30  # Number of days to keep backups
+EXCLUDE_LIST=("workspace" "cache" "tmp")  # Directories to exclude
+NOTIFY_EMAIL="admin@example.com"  # Email for notifications
+## End Configuration ##
+
+# Create timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="$BACKUP_ROOT/$TIMESTAMP"
+BACKUP_FILE="$BACKUP_ROOT/jenkins_backup_$TIMESTAMP.tar.gz"
+
+# Create backup directory
+mkdir -p "$BACKUP_DIR"
+
+# Log function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Error handling function
+error_exit() {
+    log "ERROR: $1"
+    if [ -n "$NOTIFY_EMAIL" ]; then
+        echo "Jenkins backup failed: $1" | mail -s "Jenkins Backup Failure" "$NOTIFY_EMAIL"
+    fi
+    exit 1
+}
+
+# Check prerequisites
+check_prerequisites() {
+    log "Checking prerequisites..."
+    [ -d "$JENKINS_HOME" ] || error_exit "Jenkins home directory not found: $JENKINS_HOME"
+    [ -x "$(command -v tar)" ] || error_exit "tar command not found"
+    [ -x "$(command -v systemctl)" ] && SYSTEMCTL=true || SYSTEMCTL=false
+}
+
+# Build exclude string for tar
+build_exclude_string() {
+    local excludes=""
+    for dir in "${EXCLUDE_LIST[@]}"; do
+        excludes+=" --exclude=${JENKINS_HOME}/${dir}"
+    done
+    echo "$excludes"
+}
+
+# Backup Jenkins home
+backup_jenkins_home() {
+    log "Starting Jenkins home backup..."
+    local excludes=$(build_exclude_string)
+    
+    # Create tar.gz of Jenkins home
+    if ! tar -czf "$BACKUP_FILE" $excludes -C "${JENKINS_HOME%/*}" "${JENKINS_HOME##*/}"; then
+        error_exit "Failed to create backup archive"
+    fi
+    
+    log "Jenkins home backup completed: $BACKUP_FILE"
+}
+
+# Backup system configuration
+backup_system_config() {
+    log "Backing up system configuration..."
+    
+    # Backup init files
+    [ -f /etc/sysconfig/jenkins ] && cp /etc/sysconfig/jenkins "$BACKUP_DIR/jenkins_sysconfig"
+    [ -f /etc/default/jenkins ] && cp /etc/default/jenkins "$BACKUP_DIR/jenkins_default"
+    
+    # Backup installed packages
+    if [ -x "$(command -v dpkg)" ]; then
+        dpkg --get-selections > "$BACKUP_DIR/package_list.txt"
+    elif [ -x "$(command -v rpm)" ]; then
+        rpm -qa > "$BACKUP_DIR/package_list.txt"
+    fi
+    
+    # Backup service configuration
+    if $SYSTEMCTL; then
+        systemctl show jenkins > "$BACKUP_DIR/jenkins_service.txt"
+    fi
+}
+
+# Cleanup old backups
+cleanup_old_backups() {
+    log "Cleaning up backups older than $DAYS_TO_KEEP days..."
+    find "$BACKUP_ROOT" -type d -mtime +$DAYS_TO_KEEP -exec rm -rf {} \;
+    find "$BACKUP_ROOT" -type f -name "jenkins_backup_*.tar.gz" -mtime +$DAYS_TO_KEEP -delete
+}
+
+# Main backup process
+main() {
+    log "Starting Jenkins backup process..."
+    check_prerequisites
+    
+    # Stop Jenkins (optional - uncomment if you want to stop during backup)
+    # if $SYSTEMCTL; then
+    #     log "Stopping Jenkins service..."
+    #     systemctl stop jenkins || error_exit "Failed to stop Jenkins service"
+    # fi
+    
+    backup_jenkins_home
+    backup_system_config
+    
+    # Start Jenkins (if we stopped it)
+    # if $SYSTEMCTL; then
+    #     log "Starting Jenkins service..."
+    #     systemctl start jenkins || error_exit "Failed to start Jenkins service"
+    # fi
+    
+    cleanup_old_backups
+    
+    log "Jenkins backup completed successfully"
+    
+    # Send success notification
+    if [ -n "$NOTIFY_EMAIL" ]; then
+        echo "Jenkins backup completed successfully at $(date)" | mail -s "Jenkins Backup Success" "$NOTIFY_EMAIL"
+    fi
+}
+
+# Execute main function
+main
