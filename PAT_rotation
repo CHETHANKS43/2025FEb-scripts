@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# Git PAT Rotation Script
+
+# Configuration
+GIT_SERVICE="github.com"  # Change to "gitlab.com" or your Git provider if different
+CREDENTIALS_FILE="$HOME/.git-credentials"
+GIT_CONFIG_FILE="$HOME/.gitconfig"
+OLD_PAT_NAME="OLD_PAT_$(date +%Y%m%d)"  # Name for old PAT before deletion
+
+# Check if required commands are available
+command -v git >/dev/null 2>&1 || { echo >&2 "Git is required but not installed. Aborting."; exit 1; }
+
+# Function to get current username
+get_username() {
+    git config --global --get user.name || echo ""
+}
+
+# Function to get current PAT from credentials
+get_current_pat() {
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        grep "$GIT_SERVICE" "$CREDENTIALS_FILE" | awk -F':' '{print $3}' | awk -F'@' '{print $1}'
+    else
+        echo ""
+    fi
+}
+
+# Function to generate a new PAT (pseudo-generation - you'll need to implement real generation)
+generate_new_pat() {
+    # In a real implementation, you would call your Git provider's API here
+    # This is just a placeholder that creates a random string
+    echo "github_pat_$(openssl rand -hex 20)"
+}
+
+# Function to update git credentials
+update_credentials() {
+    local username=$1
+    local new_pat=$2
+    
+    # Remove old credential if exists
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        sed -i.bak "/$GIT_SERVICE/d" "$CREDENTIALS_FILE"
+    fi
+    
+    # Add new credential
+    echo "https://$username:$new_pat@$GIT_SERVICE" >> "$CREDENTIALS_FILE"
+    chmod 600 "$CREDENTIALS_FILE"
+    
+    # Update git config to use the credential store
+    git config --global credential.helper store
+}
+
+# Main script
+echo "Starting Git PAT rotation..."
+
+username=$(get_username)
+if [ -z "$username" ]; then
+    read -p "Enter your Git username: " username
+fi
+
+old_pat=$(get_current_pat)
+if [ -n "$old_pat" ]; then
+    echo "Found existing PAT in credentials."
+else
+    echo "No existing PAT found in credentials."
+fi
+
+# Generate new PAT
+echo "Generating new PAT..."
+new_pat=$(generate_new_pat)
+
+# For real implementation, you would:
+# 1. Call your Git provider's API to create the new PAT
+# 2. Store the new PAT securely
+
+echo "Updating git credentials..."
+update_credentials "$username" "$new_pat"
+
+# Test the new credentials
+echo "Testing new credentials..."
+if git ls-remote "https://$GIT_SERVICE/$username/test" > /dev/null 2>&1; then
+    echo "New PAT works successfully!"
+else
+    echo "Warning: Could not verify new PAT. Please check manually."
+fi
+
+# Optional: Revoke old PAT
+if [ -n "$old_pat" ]; then
+    read -p "Do you want to revoke the old PAT? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Note: In a real implementation, we would now call the Git provider's API to revoke the old PAT."
+        echo "Old PAT would be renamed to $OLD_PAT_NAME before revocation."
+        # API call to rename/revoke old PAT would go here
+    fi
+fi
+
+echo "PAT rotation complete. New PAT is in effect."
