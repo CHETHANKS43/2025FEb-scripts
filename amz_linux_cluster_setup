@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# Script to set up Kubernetes master and worker nodes on Amazon Linux
+# Usage: Run with 'master' or 'worker' argument, e.g., ./setup-kubernetes-cluster.sh master
+
+ROLE=$1
+
+if [[ -z "$ROLE" ]]; then
+  echo "Error: Please specify role as 'master' or 'worker'"
+  exit 1
+fi
+
+# Common setup for both master and worker nodes
+common_setup() {
+  echo "Performing common setup..."
+
+  # Update system
+  sudo yum update -y
+
+  # Disable swap
+  sudo swapoff -a
+  sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+  # Install required packages
+  sudo yum install -y docker conntrack
+
+  # Start and enable Docker
+  sudo systemctl start docker
+  sudo systemctl enable docker
+
+  # Configure kernel parameters for Kubernetes
+  cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+EOF
+  sudo sysctl --system
+
+  # Add Kubernetes repository
+  cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/repodata/repomd.xml.key
+EOF
+
+  # Install Kubernetes components
+  sudo yum install -y kubelet-1.28.2 kubeadm-1.28.2 kubectl-1.28.2
+
+  # Enable and start kubelet
+  sudo systemctl enable kubelet
+  sudo systemctl start kubelet
+}
+
+# Master node setup
+setup_master() {
+  echo "Setting up Kubernetes master node..."
+
+  # Initialize the cluster with kubeadm
+  sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+
+  # Set up kubeconfig for the user
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+  # Install Flannel CNI plugin
+  kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+
+  # Print the join command for worker nodes
+  echo "Master node setup complete. Save the following join command for worker nodes:"
+  kubeadm token create --print-join-command
+}
+
+# Worker node setup
+setup_worker() {
+  echo "Setting up Kubernetes worker node..."
+
+  # Prompt for the join command
+  echo "Please paste the kubeadm join command from the master node:"
+  read -r -p "> " join_command
+
+  # Execute the join command
+  sudo $join_command
+}
+
+# Execute based on role
+case $ROLE in
+  "master")
+    common_setup
+    setup_master
+    ;;
+  "worker")
+    common_setup
+    setup_worker
+    ;;
+  *)
+    echo "Error: Invalid role. Use 'master' or 'worker'"
+    exit 1
+    ;;
+esac
