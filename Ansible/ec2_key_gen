@@ -1,0 +1,29 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Create a new EC2 key pair and return generated private key
+      amazon.aws.ec2_key:
+        name: my_keypair
+        state: present
+        key_type: rsa
+      register: aws_ec2_key_pair
+
+    - name: Show success message
+      debug:
+        msg: "Key pair created successfully!"
+      when: aws_ec2_key_pair.changed
+
+    - name: Print private key (for testing only - remove later)
+      debug:
+        var: aws_ec2_key_pair.key.private_key
+      when: aws_ec2_key_pair.changed
+
+    - name: Save private key to a .pem file
+      copy:
+        content: "{{ aws_ec2_key_pair.key.private_key }}"
+        dest: /home/ubuntu/my_keypair.pem
+        mode: '0600'
+      when: aws_ec2_key_pair.changed
